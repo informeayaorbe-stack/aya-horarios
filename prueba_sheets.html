@@ -633,9 +633,10 @@ async function guardarJustif(){
   if(!desc){ alert("Por favor escribí una descripción."); return; }
   state[justifTarget].justificada=tipo;
   state[justifTarget].descripcion=desc;
+  const nombreJustif = state[justifTarget].name; // guardar antes de cerrar
   closeJustifModal();
-  render(); // Actualizar UI inmediatamente sin esperar Sheets
-  actualizarJustifSheets(state[justifTarget].name, tipo, desc);
+  render();
+  actualizarJustifSheets(nombreJustif, tipo, desc);
 }
 
 // ── CARD HTML ──
