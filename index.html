@@ -412,7 +412,12 @@ function pad(n){ return String(n).padStart(2,"0"); }
 function nowStr(){ const d=new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function todayStr(){ const d=new Date(); return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`; }
 function isWithinWindow(){ const n=toMin(nowStr()); return n>=toMin(HORA_INICIO_VENTANA)&&n<=toMin(HORA_FIN_VENTANA); }
-function isMobile(){ return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent)&&window.innerWidth<1100); }
+function isMobile(){
+  const ua = navigator.userAgent;
+  // Only block actual phones/tablets, not laptops
+  if(/Android/i.test(ua) && !/Chrome\/[0-9]+ Mobile Safari/i.test(ua)) return false;
+  return /Android.*Mobile|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+}
 function isWeekend(){ const d=new Date().getDay(); return d===0||d===6; }
 
 // ── TOAST ──
@@ -459,7 +464,7 @@ function updateSheetsIndicator(){
 // ── BLOCKERS ──
 function checkBlockers(){
   if(isMobile()){ document.getElementById("blockerMobile").style.display="flex"; document.getElementById("loginScreen").style.display="none"; return false; }
-  if(isWeekend()){ document.getElementById("blockerWeekend").style.display="flex"; document.getElementById("loginScreen").style.display="none"; return false; }
+  // Weekend block only applies to non-supervisors — checked after login
   return true;
 }
 
@@ -482,6 +487,23 @@ function doLogin(){
   const d=new Date();
   document.getElementById("dateDisplay").textContent=`${DIAS[d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]} ${d.getFullYear()}`;
   document.getElementById("dayLabel").textContent=DIAS[d.getDay()];
+  // Weekend block for non-supervisors
+  if(!isSuper && isWeekend()){
+    document.getElementById("loginScreen").style.display="none";
+    document.getElementById("blockerWeekend").style.display="flex";
+    // Add logout button to weekend blocker
+    const bb = document.querySelector("#blockerWeekend .blocker-box");
+    if(!bb.querySelector(".blocker-logout")){
+      const btn = document.createElement("button");
+      btn.className="login-btn blocker-logout";
+      btn.style.marginTop="20px";
+      btn.textContent="Volver al login";
+      btn.onclick = () => { document.getElementById("blockerWeekend").style.display="none"; document.getElementById("loginScreen").style.display="flex"; doLogout(); };
+      bb.appendChild(btn);
+    }
+    return;
+  }
+
   if(isSuper) document.getElementById("dennisModal").style.display="flex";
   render();
 }
@@ -557,7 +579,7 @@ function cardHTML(s,i,isMine){
   let action="";
   if(isMine&&!done){
     action=`<button class="btn-marcar" onclick="marcar(${i})" ${!winOpen?"disabled":""}>
-      ${winOpen?"Marcar mi entrada":"Fuera de horario"}
+      ${!winOpen?"Fuera de horario":"Marcar mi entrada"}
     </button>`;
   } else if(done){
     action=`<div class="check-icon ${s.tardio?"check-late":"check-ok"}">${s.tardio?"⚠":"✓"}</div>`;
