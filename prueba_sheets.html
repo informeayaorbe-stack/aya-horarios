@@ -518,10 +518,11 @@ async function enviarASheets(data){
   }
 }
 
-async function actualizarJustifSheets(regId,nombre,fecha,justificada,descripcion){
+async function actualizarJustifSheets(nombre, justificada, descripcion){
   try{
-    const res = await fetch(SHEETS_URL, {
+    await fetch(SHEETS_URL, {
       method:"POST",
+      mode:"no-cors",
       body: JSON.stringify({accion:"justificar", nombre, justificada, descripcion})
     });
     showToast("✅ Clasificación guardada en Sheets","success");
