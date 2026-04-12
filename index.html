@@ -18,6 +18,16 @@
   --text:#1a1a18;--text-muted:#888780;--bg:#f5f4f0;--surface:#fff;
   --radius:12px;--radius-sm:8px;
 }
+body.dark{
+  --blue:#4a9fd4;--blue-mid:#5ab3e8;--blue-light:#0d2a3f;--blue-border:#1a4a6b;
+  --green:#6abf45;--green-light:#0f2d06;--green-border:#2a5c11;
+  --red:#e06c6c;--red-light:#2d0f0f;--red-border:#5c1f1f;
+  --amber:#f0b040;--amber-light:#2d1f00;--amber-border:#5c3d00;
+  --pink:#e07090;--pink-light:#2d0f1a;--pink-border:#5c1f35;
+  --gray:#a0a098;--gray-light:#1e1e1c;--gray-border:#2e2e2b;
+  --gold:#f0c040;--gold-light:#2a1f00;--gold-border:#5c4400;
+  --text:#e8e6e0;--text-muted:#888880;--bg:#121210;--surface:#1c1c1a;
+}
 body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 
 /* BLOCKER */
@@ -33,6 +43,19 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
   background:linear-gradient(135deg,#0e4a82,#185FA5,#378ADD);padding:24px;}
 .login-box{background:#fff;border-radius:20px;padding:40px 36px;width:100%;max-width:380px;
   box-shadow:0 24px 64px rgba(0,0,0,.18);}
+body.dark .login-box{background:#1c1c1a;}
+body.dark .modal-box{background:#1c1c1a;}
+body.dark .blocker-box{background:#1c1c1a;}
+body.dark .login-input,body.dark .login-select,body.dark .modal-select{background:#121210;color:var(--text);border-color:var(--gray-border);}
+body.dark .login-title{color:var(--blue);}
+body.dark .login-sub{color:var(--text-muted);}
+body.dark .lunch-section{background:var(--surface);}
+body.dark .stat-card{background:var(--surface);}
+body.dark .tecnico-card{background:var(--surface);}
+body.dark .card-late{background:#1a0f0f;}
+body.dark .header{background:#0a2a45;}
+body.dark .date-bar{background:#061a2b;}
+body.dark .sup-toolbar{background:var(--gold-light);border-color:var(--gold-border);}
 .login-logo{display:flex;justify-content:center;margin-bottom:8px;}
 .login-logo img{width:90px;height:90px;object-fit:contain;mix-blend-mode:multiply;
   filter:drop-shadow(0 2px 8px rgba(24,95,165,.15));}
@@ -252,6 +275,9 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
     </div>
     <div class="login-title">AyA — Control de Horarios</div>
     <div class="login-sub">Región Orbe · Marzo 2026</div>
+    <div style="display:flex;justify-content:center;margin-bottom:8px;">
+      <button onclick="toggleDark()" style="background:none;border:none;cursor:pointer;font-size:20px;color:var(--text-muted);" title="Modo oscuro" id="darkToggleLogin">🌙</button>
+    </div>
     <div id="loginError" class="login-error"></div>
     <label class="login-label">USUARIO</label>
     <select id="loginUser" class="login-select">
@@ -296,6 +322,7 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
       </div>
     </div>
     <div class="header-right">
+      <button id="darkToggle" onclick="toggleDark()" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:var(--radius-sm);padding:6px 12px;font-size:14px;cursor:pointer;transition:background .15s;" title="Modo oscuro">🌙</button>
       <div class="header-user">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         <span id="userNameDisplay"></span>
@@ -640,7 +667,27 @@ function tick(){
   if(d.getSeconds()===0) render();
 }
 tick(); setInterval(tick,1000);
-window.addEventListener("load",checkBlockers);
+window.addEventListener("load",()=>{
+  checkBlockers();
+  // Restore dark mode preference
+  if(localStorage.getItem("aya_dark")==="1"){
+    document.body.classList.add("dark");
+    updateDarkIcons(true);
+  }
+});
+
+function toggleDark(){
+  const isDark = document.body.classList.toggle("dark");
+  localStorage.setItem("aya_dark", isDark?"1":"0");
+  updateDarkIcons(isDark);
+}
+function updateDarkIcons(isDark){
+  const icon = isDark ? "☀️" : "🌙";
+  const t1 = document.getElementById("darkToggle");
+  const t2 = document.getElementById("darkToggleLogin");
+  if(t1) t1.textContent = icon;
+  if(t2) t2.textContent = icon;
+}
 </script>
 </body>
 </html>
