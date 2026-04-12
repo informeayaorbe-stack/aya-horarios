@@ -602,10 +602,7 @@ async function marcar(i){
   if(!isWithinWindow()){ alert(`Fuera de ventana de marcado (${HORA_INICIO} – ${HORA_FIN}).`); return; }
   const now=nowStr(), lim=toMin(state[i].entrada)+state[i].tolerancia;
   state[i].marcado=now; state[i].tardio=true; state[i].fecha=todayStr(); state[i].fechaSheets="'" + todayStr(); // PRUEBA: forzar tardía
-  const regId = state[i].id + "_" + Date.now();
-  state[i].regId = regId;
   const reg={
-    id:       regId,
     fecha:    state[i].fecha,
     nombre:   state[i].name,
     entrada:  state[i].entrada,
@@ -638,7 +635,7 @@ async function guardarJustif(){
   state[justifTarget].descripcion=desc;
   closeJustifModal();
   render(); // Actualizar UI inmediatamente sin esperar Sheets
-  actualizarJustifSheets(state[justifTarget].regId || "", state[justifTarget].name, state[justifTarget].fecha, tipo, desc); // En background
+  actualizarJustifSheets(state[justifTarget].name, tipo, desc);
 }
 
 // ── CARD HTML ──
