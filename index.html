@@ -6,6 +6,104 @@
 <title>Control de Horarios — AyA Orbe</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDxgq8fW5iMkLB3wH6BENESaPdksZRaktk",
+  authDomain: "aya-horarios-orbe.firebaseapp.com",
+  projectId: "aya-horarios-orbe",
+  storageBucket: "aya-horarios-orbe.firebasestorage.app",
+  messagingSenderId: "210001514433",
+  appId: "1:210001514433:web:cb4ed22dfc8477604c2940"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+
+// ── WEBAUTHN HELPERS ──
+function base64url(buffer){
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+function fromBase64url(str){
+  str = str.replace(/-/g,'+').replace(/_/g,'/');
+  while(str.length%4) str+='=';
+  return Uint8Array.from(atob(str),c=>c.charCodeAt(0)).buffer;
+}
+
+// Registrar huella para un usuario
+window.registrarHuella = async function(uid, nombre){
+  try{
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const pubKeyOpts = {
+      challenge,
+      rp:{ name:"AyA Orbe Control", id: location.hostname },
+      user:{
+        id: new TextEncoder().encode(uid),
+        name: uid,
+        displayName: nombre
+      },
+      pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],
+      authenticatorSelection:{
+        authenticatorAttachment:"platform", // solo biometría del dispositivo
+        userVerification:"required"
+      },
+      timeout:60000
+    };
+    const cred = await navigator.credentials.create({publicKey: pubKeyOpts});
+    // Guardar credencial en Firestore
+    await setDoc(doc(db,"webauthn_credentials",uid),{
+      credentialId: base64url(cred.rawId),
+      publicKey:    base64url(cred.response.attestationObject),
+      uid, nombre,
+      registrado:   new Date().toISOString()
+    });
+    return {ok:true};
+  }catch(e){
+    return {ok:false, error: e.message};
+  }
+};
+
+// Autenticar con huella
+window.autenticarHuella = async function(uid){
+  try{
+    const snap = await getDoc(doc(db,"webauthn_credentials",uid));
+    if(!snap.exists()) return {ok:false, error:"No hay huella registrada"};
+    const data = snap.data();
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const assertion = await navigator.credentials.get({
+      publicKey:{
+        challenge,
+        allowCredentials:[{
+          type:"public-key",
+          id: fromBase64url(data.credentialId),
+          transports:["internal"]
+        }],
+        userVerification:"required",
+        timeout:60000
+      }
+    });
+    // Si llegó aquí, la biometría fue exitosa
+    return {ok:true};
+  }catch(e){
+    return {ok:false, error: e.message};
+  }
+};
+
+// Verificar si tiene huella registrada
+window.tieneHuellaRegistrada = async function(uid){
+  try{
+    const snap = await getDoc(doc(db,"webauthn_credentials",uid));
+    return snap.exists();
+  }catch(e){ return false; }
+};
+
+window.firebaseReady = true;
+window.dispatchEvent(new Event("firebaseReady"));
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -15,6 +113,7 @@
   --gray:#5F5E5A;--gray-light:#F1EFE8;--gray-border:#D3D1C7;
   --gold:#7a5c00;--gold-light:#FFF8E1;--gold-border:#FFD54F;
   --orange:#b45309;--orange-light:#FEF3C7;--orange-border:#FCD34D;
+  --purple:#6b21a8;--purple-light:#f3e8ff;--purple-border:#d8b4fe;
   --text:#1a1a18;--text-muted:#888780;--bg:#f5f4f0;--surface:#fff;
   --radius:12px;--radius-sm:8px;
 }
@@ -25,6 +124,7 @@ body.dark{
   --gray:#a0a098;--gray-light:#1e1e1c;--gray-border:#2e2e2b;
   --gold:#f0c040;--gold-light:#2a1f00;--gold-border:#5c4400;
   --orange:#f0a030;--orange-light:#2a1500;--orange-border:#5c3000;
+  --purple:#c084fc;--purple-light:#2e1065;--purple-border:#7e22ce;
   --text:#e8e6e0;--text-muted:#888880;--bg:#121210;--surface:#1c1c1a;
 }
 body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .3s,color .3s;}
@@ -40,25 +140,32 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
 /* LOGIN */
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#0e4a82,#185FA5,#378ADD);padding:24px;}
-.login-box{background:var(--surface);border-radius:20px;padding:40px 36px;width:100%;max-width:380px;
+.login-box{background:var(--surface);border-radius:20px;padding:36px;width:100%;max-width:380px;
   box-shadow:0 24px 64px rgba(0,0,0,.18);}
 .login-logo{display:flex;justify-content:center;margin-bottom:8px;}
-.login-logo img{width:90px;height:90px;object-fit:contain;mix-blend-mode:multiply;filter:drop-shadow(0 2px 8px rgba(24,95,165,.15));}
+.login-logo img{width:90px;height:90px;object-fit:contain;mix-blend-mode:multiply;}
 .login-title{text-align:center;font-size:18px;font-weight:700;color:var(--blue);margin-bottom:4px;}
-.login-sub{text-align:center;font-size:12px;color:var(--text-muted);margin-bottom:16px;letter-spacing:.04em;}
-.dark-toggle-login{display:flex;justify-content:center;margin-bottom:16px;}
+.login-sub{text-align:center;font-size:12px;color:var(--text-muted);margin-bottom:16px;}
+.dark-toggle-login{display:flex;justify-content:center;margin-bottom:12px;}
 .login-label{display:block;font-size:12px;font-weight:600;color:var(--gray);letter-spacing:.06em;margin-bottom:6px;}
 .login-input,.login-select{width:100%;padding:10px 14px;border:1.5px solid var(--gray-border);
   border-radius:var(--radius-sm);font-size:14px;font-family:inherit;color:var(--text);
-  outline:none;margin-bottom:16px;background:var(--surface);transition:border-color .15s;}
+  outline:none;margin-bottom:14px;background:var(--surface);transition:border-color .15s;}
 .login-input:focus,.login-select:focus{border-color:var(--blue-mid);}
 .login-btn{width:100%;padding:12px;background:var(--blue);color:#fff;border:none;
   border-radius:var(--radius-sm);font-size:14px;font-weight:700;cursor:pointer;
-  font-family:inherit;transition:background .15s,transform .1s;letter-spacing:.04em;}
+  font-family:inherit;transition:background .15s,transform .1s;}
 .login-btn:hover{background:var(--blue-mid);}
 .login-btn:active{transform:scale(.98);}
+.login-btn.secondary{background:var(--surface);color:var(--blue);border:1.5px solid var(--blue-border);margin-top:10px;}
+.login-btn.secondary:hover{background:var(--blue-light);}
+.login-btn.biometric{background:var(--purple);margin-top:10px;}
+.login-btn.biometric:hover{opacity:.9;}
+.login-btn:disabled{opacity:.5;cursor:not-allowed;}
 .login-error{background:var(--red-light);color:var(--red);border-radius:var(--radius-sm);
-  padding:10px 14px;font-size:13px;font-weight:500;margin-bottom:16px;display:none;text-align:center;}
+  padding:10px 14px;font-size:13px;font-weight:500;margin-bottom:14px;display:none;text-align:center;}
+.login-divider{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--text-muted);font-size:12px;}
+.login-divider::before,.login-divider::after{content:"";flex:1;height:1px;background:var(--gray-border);}
 
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;
@@ -68,10 +175,10 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
 .modal-title{font-size:16px;font-weight:700;color:var(--blue);margin-bottom:6px;}
 .modal-sub{font-size:13px;color:var(--text-muted);margin-bottom:20px;line-height:1.5;}
 .modal-label{font-size:12px;font-weight:600;color:var(--gray);letter-spacing:.06em;margin-bottom:6px;display:block;}
-.modal-select,.modal-textarea{width:100%;padding:10px 14px;border:1.5px solid var(--gray-border);
+.modal-select,.modal-textarea,.modal-input{width:100%;padding:10px 14px;border:1.5px solid var(--gray-border);
   border-radius:var(--radius-sm);font-size:14px;font-family:inherit;
   color:var(--text);outline:none;margin-bottom:16px;background:var(--surface);}
-.modal-select:focus,.modal-textarea:focus{border-color:var(--blue-mid);}
+.modal-select:focus,.modal-textarea:focus,.modal-input:focus{border-color:var(--blue-mid);}
 .modal-textarea{resize:vertical;min-height:80px;line-height:1.5;}
 .modal-btn{width:100%;padding:11px;background:var(--blue);color:#fff;border:none;
   border-radius:var(--radius-sm);font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;}
@@ -80,16 +187,26 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
 .modal-btn-row .modal-btn{flex:1;}
 .modal-btn.cancel{background:var(--gray-light);color:var(--text);}
 .modal-btn.cancel:hover{background:var(--gray-border);}
+.modal-btn.purple{background:var(--purple);}
+.modal-btn.purple:hover{opacity:.9;}
+
+/* BIOMETRIC STATUS */
+.biometric-status{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  border-radius:var(--radius-sm);font-size:13px;font-weight:500;margin-bottom:14px;}
+.biometric-ok{background:var(--green-light);color:var(--green);}
+.biometric-no{background:var(--purple-light);color:var(--purple);}
 
 /* TOAST */
 .toast{position:fixed;bottom:24px;right:24px;background:#1a1a18;color:#fff;
   padding:12px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;
-  z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.2);
+  z-index:9999;display:flex;align-items:center;gap:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.2);
   transform:translateY(80px);opacity:0;transition:all .3s ease;max-width:320px;}
 .toast.show{transform:translateY(0);opacity:1;}
 .toast.success{background:#2d5a1b;}
 .toast.error{background:#8b1a1a;}
 .toast.sending{background:#0e4a82;}
+.toast.info{background:var(--purple);}
 
 /* HEADER */
 .header{background:var(--blue);padding:16px 28px;display:flex;align-items:center;
@@ -106,7 +223,7 @@ body{font-family:"Plus Jakarta Sans",sans-serif;background:var(--bg);color:var(-
   padding:6px 12px;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,.25);
   display:flex;align-items:center;gap:6px;}
 .header-badge{background:var(--gold-light);color:var(--gold);font-size:10px;font-weight:700;
-  padding:2px 8px;border-radius:20px;letter-spacing:.05em;}
+  padding:2px 8px;border-radius:20px;}
 .header-clock{font-family:"IBM Plex Mono",monospace;font-size:20px;font-weight:500;
   color:#fff;background:rgba(255,255,255,.12);padding:6px 14px;
   border-radius:var(--radius-sm);border:1px solid rgba(255,255,255,.2);}
@@ -207,18 +324,20 @@ body.dark .card-late{background:#1a0f0f;}
 /* SUP TOOLBAR */
 .sup-toolbar{background:var(--gold-light);border:1px solid var(--gold-border);
   border-radius:var(--radius);padding:14px 20px;margin-bottom:20px;
-  display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-.sup-toolbar-title{font-size:12px;font-weight:700;color:var(--gold);letter-spacing:.06em;flex:1;}
-.btn-sup{border:none;border-radius:var(--radius-sm);padding:8px 16px;font-size:12px;
-  font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;transition:all .15s;}
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.sup-toolbar-title{font-size:12px;font-weight:700;color:var(--gold);letter-spacing:.06em;flex:1;min-width:100px;}
+.btn-sup{border:none;border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;
+  font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;transition:all .15s;white-space:nowrap;}
 .btn-green{background:var(--green);color:#fff;}
 .btn-green:hover{background:#2d5a1b;}
 .btn-blue{background:var(--blue);color:#fff;}
 .btn-blue:hover{background:var(--blue-mid);}
 .btn-orange{background:var(--orange);color:#fff;}
 .btn-orange:hover{opacity:.85;}
+.btn-purple{background:var(--purple);color:#fff;}
+.btn-purple:hover{opacity:.85;}
 
-/* REPORTE PANEL */
+/* REPORTE */
 .report-panel{background:var(--surface);border-radius:var(--radius);
   border:1px solid rgba(0,0,0,.08);padding:24px;margin-bottom:28px;display:none;}
 .report-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;}
@@ -251,8 +370,7 @@ body.dark .card-late{background:#1a0f0f;}
   letter-spacing:.09em;text-transform:uppercase;color:var(--gray);
   border-bottom:1px solid var(--gray-border);display:flex;align-items:center;gap:8px;}
 .lunch-rows{padding:4px 0;}
-.lunch-row{display:flex;align-items:center;padding:10px 20px;
-  font-size:13px;border-bottom:1px solid rgba(0,0,0,.04);gap:12px;}
+.lunch-row{display:flex;align-items:center;padding:10px 20px;font-size:13px;border-bottom:1px solid rgba(0,0,0,.04);gap:12px;}
 .lunch-row:last-child{border-bottom:none;}
 .lunch-name{font-weight:600;color:var(--text);flex:1;}
 .lunch-sede{font-size:11px;background:var(--blue-light);color:var(--blue);padding:2px 8px;border-radius:20px;font-weight:600;}
@@ -263,7 +381,8 @@ body.dark .card-late{background:#1a0f0f;}
   letter-spacing:.04em;border-top:1px solid var(--gray-border);margin-top:12px;}
 
 @media(max-width:640px){
-  .main{padding:14px}.header{padding:12px}.stats{grid-template-columns:1fr 1fr;gap:8px}
+  .main{padding:14px}.header{padding:12px}
+  .stats{grid-template-columns:1fr 1fr;gap:8px}
   .stat-card{padding:12px 10px}.stat-num{font-size:28px}
   .tecnico-card{flex-wrap:wrap}.header-clock{font-size:15px;padding:4px 8px}
   .report-grid{grid-template-columns:1fr 1fr}
@@ -304,7 +423,7 @@ body.dark .card-late{background:#1a0f0f;}
     </div>
     <div id="loginError" class="login-error"></div>
     <label class="login-label">USUARIO</label>
-    <select id="loginUser" class="login-select">
+    <select id="loginUser" class="login-select" onchange="checkBiometric()">
       <option value="">Seleccione su nombre...</option>
       <option value="sebastian">Sebastián Madriz</option>
       <option value="jordan">Jordan Brown</option>
@@ -313,9 +432,21 @@ body.dark .card-late{background:#1a0f0f;}
       <option value="evelyn">Evelyn García</option>
       <option value="dennis">Dennis Valverde</option>
     </select>
+
+    <!-- Biometric status -->
+    <div id="biometricStatus" style="display:none;" class="biometric-status biometric-no">
+      <span id="biometricIcon">☝️</span>
+      <span id="biometricText">Huella no registrada</span>
+    </div>
+
     <label class="login-label">CONTRASEÑA</label>
     <input type="password" id="loginPass" class="login-input" placeholder="••••••••">
     <button class="login-btn" onclick="doLogin()">Ingresar</button>
+
+    <div id="biometricLoginWrap" style="display:none;">
+      <div class="login-divider">o</div>
+      <button class="login-btn biometric" onclick="loginConHuella()">☝️ Ingresar con huella digital</button>
+    </div>
   </div>
 </div>
 
@@ -333,11 +464,11 @@ body.dark .card-late{background:#1a0f0f;}
   </div>
 </div>
 
-<!-- MODAL JUSTIFICACIÓN (solo Sebastián) -->
+<!-- MODAL JUSTIFICACIÓN -->
 <div id="justifModal" class="modal-overlay" style="display:none;">
   <div class="modal-box">
     <div class="modal-title">📝 Clasificar tardía</div>
-    <div class="modal-sub" id="justifModalSub">Clasificá la tardía de este técnico.</div>
+    <div class="modal-sub" id="justifModalSub"></div>
     <label class="modal-label">TIPO</label>
     <select id="justifTipo" class="modal-select">
       <option value="Justificada">Justificada</option>
@@ -356,17 +487,31 @@ body.dark .card-late{background:#1a0f0f;}
 <div id="changePassModal" class="modal-overlay" style="display:none;">
   <div class="modal-box">
     <div class="modal-title">🔐 Cambiar contraseña</div>
-    <div class="modal-sub" id="changePassSub">Es tu primer inicio de sesión. Por seguridad debés crear una contraseña personal.</div>
+    <div class="modal-sub" id="changePassSub"></div>
     <label class="modal-label">CONTRASEÑA ACTUAL</label>
-    <input type="password" id="cpActual" class="modal-select" placeholder="••••••••" style="margin-bottom:16px;">
+    <input type="password" id="cpActual" class="modal-input" placeholder="••••••••">
     <label class="modal-label">NUEVA CONTRASEÑA</label>
-    <input type="password" id="cpNueva" class="modal-select" placeholder="Mínimo 6 caracteres" style="margin-bottom:16px;">
+    <input type="password" id="cpNueva" class="modal-input" placeholder="Mínimo 6 caracteres">
     <label class="modal-label">CONFIRMAR NUEVA CONTRASEÑA</label>
-    <input type="password" id="cpConfirmar" class="modal-select" placeholder="Repetí la nueva contraseña" style="margin-bottom:16px;">
+    <input type="password" id="cpConfirmar" class="modal-input" placeholder="Repetí la nueva contraseña">
     <div id="cpError" style="background:var(--red-light);color:var(--red);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;font-weight:500;margin-bottom:16px;display:none;"></div>
     <div class="modal-btn-row">
       <button class="modal-btn cancel" id="cpCancelar" onclick="closeChangePass()">Cancelar</button>
       <button class="modal-btn" onclick="guardarNuevaPass()">Guardar contraseña</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL REGISTRAR HUELLA -->
+<div id="huellaModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-title">☝️ Registrar huella digital</div>
+    <div class="modal-sub">Tu dispositivo usará el lector biométrico para registrar tu huella. Una vez registrada, podrás iniciar sesión sin contraseña.</div>
+    <div id="huellaStatus" style="text-align:center;padding:20px;font-size:32px;">☝️</div>
+    <div id="huellaMsg" style="text-align:center;font-size:13px;color:var(--text-muted);margin-bottom:20px;">Presioná el botón y colocá tu huella cuando el dispositivo lo indique.</div>
+    <div class="modal-btn-row">
+      <button class="modal-btn cancel" onclick="closeHuellaModal()">Cancelar</button>
+      <button class="modal-btn purple" onclick="ejecutarRegistroHuella()" id="btnRegistrarHuella">☝️ Registrar ahora</button>
     </div>
   </div>
 </div>
@@ -391,7 +536,7 @@ body.dark .card-late{background:#1a0f0f;}
         <span class="sheets-dot"></span><span id="sheetsText">Sheets OK</span>
       </div>
       <div class="header-clock" id="clock">--:--:--</div>
-      <button class="btn-icon" onclick="toggleDark()" id="darkToggle" title="Modo oscuro">🌙</button>
+      <button class="btn-icon" onclick="toggleDark()" id="darkToggle">🌙</button>
       <button class="btn-icon" onclick="doLogout()">Salir</button>
     </div>
   </header>
@@ -402,33 +547,31 @@ body.dark .card-late{background:#1a0f0f;}
     <span id="windowBadge" class="window-badge"></span>
   </div>
 
-  <div style="text-align:right;padding:6px 28px;background:var(--bg);border-bottom:1px solid var(--gray-border);">
-    <button onclick="openChangePass(false)" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-muted);font-family:inherit;text-decoration:underline;">🔐 Cambiar mi contraseña</button>
+  <div style="text-align:right;padding:6px 28px;border-bottom:1px solid var(--gray-border);">
+    <button onclick="openChangePass(false)" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-muted);font-family:inherit;text-decoration:underline;margin-right:12px;">🔐 Cambiar contraseña</button>
+    <button onclick="openHuellaModal()" id="btnHuellaHeader" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--purple);font-family:inherit;text-decoration:underline;">☝️ <span id="huellaHeaderText">Registrar huella</span></button>
   </div>
+
   <main class="main">
 
-    <!-- SUPERVISOR TOOLBAR -->
     <div id="supToolbar" class="sup-toolbar" style="display:none;">
       <span class="sup-toolbar-title">🛡️ Panel de Supervisor</span>
       <button class="btn-sup btn-blue" onclick="openDennisModal()">⚙️ Horario de Dennis</button>
-      <button class="btn-sup btn-orange" onclick="toggleReporte()">📊 Ver reporte del mes</button>
-      <button class="btn-sup" style="background:#6b21a8;color:#fff;" onclick="openChangePass(false)">🔐 Cambiar contraseña</button>
+      <button class="btn-sup btn-orange" onclick="toggleReporte()">📊 Reporte del mes</button>
       <button class="btn-sup btn-green" onclick="exportCSV()">⬇️ Exportar CSV</button>
     </div>
 
-    <!-- REPORTE PANEL -->
     <div class="report-panel" id="reportPanel">
       <div class="report-header">
         <div>
           <div class="report-title" id="reportTitle">Reporte mensual</div>
-          <div class="report-sub" id="reportSub">Cargando datos...</div>
+          <div class="report-sub" id="reportSub">Cargando...</div>
         </div>
-        <button class="btn-sup btn-green" onclick="cargarReporte()" style="font-size:12px;">🔄 Actualizar</button>
+        <button class="btn-sup btn-green" onclick="cargarReporte()">🔄 Actualizar</button>
       </div>
       <div id="reportContent" class="report-loading">Cargando datos desde Google Sheets...</div>
     </div>
 
-    <!-- STATS -->
     <div class="stats">
       <div class="stat-card stat-ok"><div class="stat-label">A tiempo</div><div class="stat-num" id="cnt-ok">0</div><div class="stat-sub">técnicos puntuales</div></div>
       <div class="stat-card stat-late"><div class="stat-label">Tardías</div><div class="stat-num" id="cnt-late">0</div><div class="stat-sub">llegadas tardías</div></div>
@@ -478,28 +621,6 @@ const USUARIOS_DEFAULT = {
   evelyn:    { pass:"Egarcia26",   idx:4, supervisor:false, puedeJustificar:false },
   dennis:    { pass:"Dvalverde26", idx:5, supervisor:true,  puedeJustificar:false },
 };
-
-// Cargar contraseñas personalizadas desde localStorage
-function getUsuarios(){
-  const saved = localStorage.getItem("aya_passwords");
-  if(!saved) return JSON.parse(JSON.stringify(USUARIOS_DEFAULT));
-  const custom = JSON.parse(saved);
-  const result = JSON.parse(JSON.stringify(USUARIOS_DEFAULT));
-  Object.keys(custom).forEach(uid => {
-    if(result[uid]) result[uid].pass = custom[uid];
-  });
-  return result;
-}
-function savePassword(uid, newPass){
-  const saved = JSON.parse(localStorage.getItem("aya_passwords") || "{}");
-  saved[uid] = newPass;
-  localStorage.setItem("aya_passwords", JSON.stringify(saved));
-}
-function isFirstLogin(uid){
-  const saved = JSON.parse(localStorage.getItem("aya_passwords") || "{}");
-  return !saved[uid]; // Si no tiene contraseña guardada = primer login
-}
-const USUARIOS = getUsuarios();
 const TECNICOS = [
   { id:"sebastian", name:"Sebastián Madriz", initials:"SM", entrada:"07:00", tolerancia:5, supervisor:true,  color:"#7a5c00", bg:"#FFF8E1", border:"#FFD54F" },
   { id:"jordan",    name:"Jordan Brown",     initials:"JB", entrada:"08:00", tolerancia:5, supervisor:false, color:"#3B6D11", bg:"#EAF3DE", border:"#C0DD97" },
@@ -512,11 +633,20 @@ const HORA_INICIO = "06:30", HORA_FIN = "09:00";
 const DIAS  = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
-let state       = TECNICOS.map(t => ({...t, marcado:null, tardio:false, fecha:null, justificada:null, descripcion:""}));
-let currentUser = null, isSuper = false, puedeJustificar = false;
-let justifTarget= null;
-let reportChart = null;
-let sheetsOK    = null;
+let state       = TECNICOS.map(t=>({...t,marcado:null,tardio:false,fecha:null,justificada:null,descripcion:""}));
+let currentUser = null, isSuper=false, puedeJustificar=false;
+let justifTarget= null, changePassForced=false;
+let reportChart = null, sheetsOK=null;
+
+// ── PASSWORD HELPERS ──
+function getUsuarios(){
+  const saved=localStorage.getItem("aya_passwords");
+  const result=JSON.parse(JSON.stringify(USUARIOS_DEFAULT));
+  if(saved){ const c=JSON.parse(saved); Object.keys(c).forEach(u=>{ if(result[u]) result[u].pass=c[u]; }); }
+  return result;
+}
+function savePassword(uid,p){ const s=JSON.parse(localStorage.getItem("aya_passwords")||"{}"); s[uid]=p; localStorage.setItem("aya_passwords",JSON.stringify(s)); }
+function isFirstLogin(uid){ return !JSON.parse(localStorage.getItem("aya_passwords")||"{}")[uid]; }
 
 // ── UTILS ──
 function toMin(hhmm){ const[h,m]=hhmm.split(":").map(Number); return h*60+m; }
@@ -526,74 +656,64 @@ function todayStr(){ const d=new Date(); return `${pad(d.getDate())}/${pad(d.get
 function isWithinWindow(){ const n=toMin(nowStr()); return n>=toMin(HORA_INICIO)&&n<=toMin(HORA_FIN); }
 function isMobile(){ return /Android.*Mobile|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); }
 function isWeekend(){ const d=new Date().getDay(); return d===0||d===6; }
+function supportsWebAuthn(){ return !!window.PublicKeyCredential; }
 
 // ── DARK MODE ──
-function toggleDark(){
-  const dark=document.body.classList.toggle("dark");
-  localStorage.setItem("aya_dark",dark?"1":"0");
-  updateDarkIcons(dark);
-}
-function updateDarkIcons(dark){
-  const ic=dark?"☀️":"🌙";
-  ["darkToggle","darkToggleLogin"].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent=ic; });
-}
+function toggleDark(){ const d=document.body.classList.toggle("dark"); localStorage.setItem("aya_dark",d?"1":"0"); updateDarkIcons(d); }
+function updateDarkIcons(d){ const ic=d?"☀️":"🌙"; ["darkToggle","darkToggleLogin"].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent=ic; }); }
 
 // ── TOAST ──
 let toastTimer;
-function showToast(msg,type="success"){
-  const t=document.getElementById("toast");
-  t.textContent=msg; t.className=`toast ${type} show`;
-  clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>t.className="toast",3500);
-}
+function showToast(msg,type="success"){ const t=document.getElementById("toast"); t.textContent=msg; t.className=`toast ${type} show`; clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.className="toast",3500); }
 
 // ── SHEETS ──
 async function enviarASheets(data){
   try{
-    showToast("✅ Entrada marcada correctamente","success");
-    // Fire and forget — no esperar respuesta para no bloquear UI
-    fetch(SHEETS_URL,{method:"POST",body:JSON.stringify(data),mode:"no-cors"});
+    fetch(SHEETS_URL,{method:"POST",mode:"no-cors",body:JSON.stringify(data)});
     sheetsOK=true; updateSheetsUI();
-  }catch(e){
-    sheetsOK=false; updateSheetsUI();
-    showToast("⚠️ Sin conexión a Sheets — guardado localmente","error");
-  }
+    showToast("✅ Entrada marcada correctamente","success");
+  }catch(e){ sheetsOK=false; updateSheetsUI(); showToast("⚠️ Sin conexión a Sheets","error"); }
 }
-
-async function actualizarJustifSheets(nombre, justificada, descripcion){
+async function actualizarJustifSheets(nombre,justificada,descripcion){
   try{
-    await fetch(SHEETS_URL, {
-      method:"POST",
-      mode:"no-cors",
-      body: JSON.stringify({accion:"justificar", nombre, justificada, descripcion})
-    });
-    showToast("✅ Clasificación guardada en Sheets","success");
-  }catch(e){
-    showToast("⚠️ Error al guardar en Sheets","error");
-  }
+    await fetch(SHEETS_URL,{method:"POST",mode:"no-cors",body:JSON.stringify({accion:"justificar",nombre,justificada,descripcion})});
+    showToast("✅ Clasificación guardada","success");
+  }catch(e){ showToast("⚠️ Error al guardar","error"); }
 }
-
 function updateSheetsUI(){
-  const el=document.getElementById("sheetsIndicator");
-  const tx=document.getElementById("sheetsText");
+  const el=document.getElementById("sheetsIndicator"),tx=document.getElementById("sheetsText");
   if(sheetsOK===null){el.style.display="none";return;}
   el.style.display="flex";
-  if(sheetsOK){ el.className="sheets-status sheets-ok"; tx.textContent="Sheets OK"; }
-  else{ el.className="sheets-status sheets-err"; tx.textContent="Sin Sheets"; }
+  if(sheetsOK){el.className="sheets-status sheets-ok";tx.textContent="Sheets OK";}
+  else{el.className="sheets-status sheets-err";tx.textContent="Sin Sheets";}
 }
 
 // ── BLOCKERS ──
-function checkBlockers(){
-  if(isMobile()){ document.getElementById("blockerMobile").style.display="flex"; document.getElementById("loginScreen").style.display="none"; return false; }
-  return true;
-}
-function volverLogin(){
-  document.getElementById("blockerWeekend").style.display="none";
-  document.getElementById("loginScreen").style.display="flex";
-  currentUser=null; isSuper=false;
+function checkBlockers(){ if(isMobile()){document.getElementById("blockerMobile").style.display="flex";document.getElementById("loginScreen").style.display="none";return false;} return true; }
+function volverLogin(){ document.getElementById("blockerWeekend").style.display="none"; document.getElementById("loginScreen").style.display="flex"; currentUser=null; isSuper=false; }
+
+// ── BIOMETRIC CHECK EN LOGIN ──
+async function checkBiometric(){
+  const uid=document.getElementById("loginUser").value;
+  const statusDiv=document.getElementById("biometricStatus");
+  const loginWrap=document.getElementById("biometricLoginWrap");
+  if(!uid||!supportsWebAuthn()){statusDiv.style.display="none";loginWrap.style.display="none";return;}
+  const tiene=await window.tieneHuellaRegistrada(uid);
+  statusDiv.style.display="flex";
+  if(tiene){
+    statusDiv.className="biometric-status biometric-ok";
+    document.getElementById("biometricIcon").textContent="✅";
+    document.getElementById("biometricText").textContent="Huella registrada — podés usarla";
+    loginWrap.style.display="block";
+  } else {
+    statusDiv.className="biometric-status biometric-no";
+    document.getElementById("biometricIcon").textContent="☝️";
+    document.getElementById("biometricText").textContent="Sin huella registrada — usá contraseña";
+    loginWrap.style.display="none";
+  }
 }
 
-// ── LOGIN ──
+// ── LOGIN CON CONTRASEÑA ──
 function doLogin(){
   const uid=document.getElementById("loginUser").value;
   const pass=document.getElementById("loginPass").value;
@@ -601,10 +721,31 @@ function doLogin(){
   err.style.display="none";
   if(!uid){err.textContent="Seleccione su usuario.";err.style.display="block";return;}
   if(!pass){err.textContent="Ingrese su contraseña.";err.style.display="block";return;}
+  const USUARIOS=getUsuarios();
   const u=USUARIOS[uid];
   if(!u||pass!==u.pass){err.textContent="Usuario o contraseña incorrectos.";err.style.display="block";return;}
+  entrarAlSistema(uid, u);
+}
+document.getElementById("loginPass").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin();});
+
+// ── LOGIN CON HUELLA ──
+async function loginConHuella(){
+  const uid=document.getElementById("loginUser").value;
+  if(!uid){showToast("Seleccioná tu usuario primero","error");return;}
+  showToast("☝️ Colocá tu huella...","info");
+  const res=await window.autenticarHuella(uid);
+  if(res.ok){
+    const USUARIOS=getUsuarios();
+    entrarAlSistema(uid, USUARIOS[uid]);
+  } else {
+    showToast("❌ Huella no reconocida: "+res.error,"error");
+  }
+}
+
+// ── ENTRAR AL SISTEMA ──
+function entrarAlSistema(uid, u){
+  if(!isSuper&&isWeekend()){document.getElementById("loginScreen").style.display="none";document.getElementById("blockerWeekend").style.display="flex";return;}
   currentUser=uid; isSuper=u.supervisor; puedeJustificar=u.puedeJustificar;
-  if(!isSuper&&isWeekend()){ document.getElementById("loginScreen").style.display="none"; document.getElementById("blockerWeekend").style.display="flex"; return; }
   document.getElementById("loginScreen").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("userNameDisplay").textContent=TECNICOS[u.idx].name;
@@ -614,83 +755,26 @@ function doLogin(){
   document.getElementById("dateDisplay").textContent=`${DIAS[d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]} ${d.getFullYear()}`;
   document.getElementById("dayLabel").textContent=DIAS[d.getDay()];
   if(isSuper) document.getElementById("dennisModal").style.display="flex";
-  // Si es primer login, forzar cambio de contraseña
-  if(isFirstLogin(uid)){
-    setTimeout(()=> openChangePass(true), isSuper ? 500 : 0);
-  }
+  if(isFirstLogin(uid)) setTimeout(()=>openChangePass(true), isSuper?600:0);
+  actualizarHuellaHeader();
   render();
 }
-document.getElementById("loginPass").addEventListener("keydown",e=>{ if(e.key==="Enter") doLogin(); });
 
 function doLogout(){
-  currentUser=null; isSuper=false; puedeJustificar=false; sheetsOK=null;
+  currentUser=null;isSuper=false;puedeJustificar=false;sheetsOK=null;
   document.getElementById("app").style.display="none";
   document.getElementById("loginScreen").style.display="flex";
   document.getElementById("loginPass").value="";
   document.getElementById("loginUser").value="";
   document.getElementById("loginError").style.display="none";
+  document.getElementById("biometricStatus").style.display="none";
+  document.getElementById("biometricLoginWrap").style.display="none";
   document.getElementById("reportPanel").style.display="none";
   updateSheetsUI();
 }
 
-// ── CAMBIAR CONTRASEÑA ──
-let changePassForced = false;
-
-function openChangePass(forced){
-  changePassForced = forced;
-  const sub = document.getElementById("changePassSub");
-  const cancel = document.getElementById("cpCancelar");
-  if(forced){
-    sub.textContent = "Es tu primer inicio de sesión. Por seguridad debés crear una contraseña personal.";
-    cancel.style.display = "none";
-  } else {
-    sub.textContent = "Podés cambiar tu contraseña cuando quieras.";
-    cancel.style.display = "block";
-  }
-  document.getElementById("cpActual").value = "";
-  document.getElementById("cpNueva").value = "";
-  document.getElementById("cpConfirmar").value = "";
-  document.getElementById("cpError").style.display = "none";
-  document.getElementById("changePassModal").style.display = "flex";
-}
-
-function closeChangePass(){
-  if(changePassForced) return; // No se puede cerrar si es obligatorio
-  document.getElementById("changePassModal").style.display = "none";
-}
-
-function guardarNuevaPass(){
-  const actual    = document.getElementById("cpActual").value;
-  const nueva     = document.getElementById("cpNueva").value;
-  const confirmar = document.getElementById("cpConfirmar").value;
-  const err       = document.getElementById("cpError");
-  err.style.display = "none";
-
-  const USUARIOS_ACTUAL = getUsuarios();
-  if(!currentUser || !USUARIOS_ACTUAL[currentUser]){
-    err.textContent = "Error: usuario no encontrado."; err.style.display = "block"; return;
-  }
-  if(actual !== USUARIOS_ACTUAL[currentUser].pass){
-    err.textContent = "La contraseña actual es incorrecta."; err.style.display = "block"; return;
-  }
-  if(nueva.length < 6){
-    err.textContent = "La nueva contraseña debe tener al menos 6 caracteres."; err.style.display = "block"; return;
-  }
-  if(nueva !== confirmar){
-    err.textContent = "Las contraseñas no coinciden."; err.style.display = "block"; return;
-  }
-  if(nueva === actual){
-    err.textContent = "La nueva contraseña debe ser diferente a la actual."; err.style.display = "block"; return;
-  }
-
-  savePassword(currentUser, nueva);
-  document.getElementById("changePassModal").style.display = "none";
-  changePassForced = false;
-  showToast("✅ Contraseña actualizada correctamente","success");
-}
-
 // ── MODAL DENNIS ──
-function openDennisModal(){ document.getElementById("dennisModal").style.display="flex"; }
+function openDennisModal(){document.getElementById("dennisModal").style.display="flex";}
 function confirmDennisSchedule(){
   state[5].entrada=document.getElementById("dennisSchedule").value;
   document.getElementById("dennisModal").style.display="none";
@@ -700,26 +784,16 @@ function confirmDennisSchedule(){
 
 // ── MARCAR ──
 async function marcar(i){
-  if(currentUser!==state[i].id) return;
-  if(!isWithinWindow()){ alert(`Fuera de ventana de marcado (${HORA_INICIO} – ${HORA_FIN}).`); return; }
-  const now=nowStr(), lim=toMin(state[i].entrada)+state[i].tolerancia;
-  state[i].marcado=now; state[i].tardio=toMin(now)>lim; state[i].fecha=todayStr(); state[i].fechaSheets="'" + todayStr();
-  const regId = state[i].id + "_" + Date.now();
-  state[i].regId = regId;
-  const reg={
-    id:       regId,
-    fecha:    state[i].fecha,
-    nombre:   state[i].name,
-    entrada:  state[i].entrada,
-    marcado:  now,
-    estado:   state[i].tardio?"TARDÍA":"A TIEMPO",
-    tardio:   state[i].tardio?"Sí":"No",
-    justificada:"",
-    descripcion:""
-  };
-  localStorage.setItem("aya_registros",JSON.stringify([...JSON.parse(localStorage.getItem("aya_registros")||"[]"),reg]));
-  render(); // UI inmediata
-  enviarASheets(reg); // Sheets en background
+  if(currentUser!==state[i].id)return;
+  if(!isWithinWindow()){alert(`Fuera de ventana de marcado (${HORA_INICIO} – ${HORA_FIN}).`);return;}
+  const now=nowStr(),lim=toMin(state[i].entrada)+state[i].tolerancia;
+  state[i].marcado=now;state[i].tardio=toMin(now)>lim;state[i].fecha=todayStr();
+  const reg={fecha:state[i].fecha,nombre:state[i].name,entrada:state[i].entrada,
+    marcado:now,estado:state[i].tardio?"TARDÍA":"A TIEMPO",tardio:state[i].tardio?"Sí":"No",justificada:"",descripcion:""};
+  const regs=JSON.parse(localStorage.getItem("aya_registros")||"[]");
+  regs.push(reg);localStorage.setItem("aya_registros",JSON.stringify(regs));
+  await enviarASheets(reg);
+  render();
 }
 
 // ── JUSTIFICACIÓN ──
@@ -730,75 +804,122 @@ function openJustifModal(i){
   document.getElementById("justifDesc").value=state[i].descripcion||"";
   document.getElementById("justifModal").style.display="flex";
 }
-function closeJustifModal(){ document.getElementById("justifModal").style.display="none"; justifTarget=null; }
+function closeJustifModal(){document.getElementById("justifModal").style.display="none";justifTarget=null;}
 async function guardarJustif(){
-  if(justifTarget===null) return;
+  if(justifTarget===null)return;
   const tipo=document.getElementById("justifTipo").value;
   const desc=document.getElementById("justifDesc").value.trim();
-  if(!desc){ alert("Por favor escribí una descripción."); return; }
+  if(!desc){alert("Por favor escribí una descripción.");return;}
   state[justifTarget].justificada=tipo;
   state[justifTarget].descripcion=desc;
+  const nombreJustif=state[justifTarget].name;
   closeJustifModal();
-  render(); // Actualizar UI inmediatamente sin esperar Sheets
-  actualizarJustifSheets(state[justifTarget].regId || "", state[justifTarget].name, state[justifTarget].fecha, tipo, desc); // En background
+  render();
+  actualizarJustifSheets(nombreJustif,tipo,desc);
+}
+
+// ── CAMBIAR CONTRASEÑA ──
+function openChangePass(forced){
+  changePassForced=forced;
+  document.getElementById("changePassSub").textContent=forced
+    ?"Es tu primer inicio de sesión. Por seguridad debés crear una contraseña personal."
+    :"Podés cambiar tu contraseña cuando quieras.";
+  document.getElementById("cpCancelar").style.display=forced?"none":"block";
+  ["cpActual","cpNueva","cpConfirmar"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("cpError").style.display="none";
+  document.getElementById("changePassModal").style.display="flex";
+}
+function closeChangePass(){if(changePassForced)return;document.getElementById("changePassModal").style.display="none";}
+function guardarNuevaPass(){
+  const actual=document.getElementById("cpActual").value;
+  const nueva=document.getElementById("cpNueva").value;
+  const confirmar=document.getElementById("cpConfirmar").value;
+  const err=document.getElementById("cpError");
+  err.style.display="none";
+  const USUARIOS=getUsuarios();
+  if(!currentUser||!USUARIOS[currentUser]){err.textContent="Error: usuario no encontrado.";err.style.display="block";return;}
+  if(actual!==USUARIOS[currentUser].pass){err.textContent="La contraseña actual es incorrecta.";err.style.display="block";return;}
+  if(nueva.length<6){err.textContent="Mínimo 6 caracteres.";err.style.display="block";return;}
+  if(nueva!==confirmar){err.textContent="Las contraseñas no coinciden.";err.style.display="block";return;}
+  if(nueva===actual){err.textContent="Debe ser diferente a la actual.";err.style.display="block";return;}
+  savePassword(currentUser,nueva);
+  document.getElementById("changePassModal").style.display="none";
+  changePassForced=false;
+  showToast("✅ Contraseña actualizada correctamente","success");
+}
+
+// ── HUELLA DIGITAL ──
+async function actualizarHuellaHeader(){
+  if(!supportsWebAuthn()||!currentUser)return;
+  const tiene=await window.tieneHuellaRegistrada(currentUser);
+  const txt=document.getElementById("huellaHeaderText");
+  if(txt) txt.textContent=tiene?"Editar huella":"Registrar huella";
+}
+function openHuellaModal(){
+  document.getElementById("huellaStatus").textContent="☝️";
+  document.getElementById("huellaMsg").textContent="Presioná el botón y colocá tu huella cuando el dispositivo lo indique.";
+  document.getElementById("btnRegistrarHuella").disabled=false;
+  document.getElementById("huellaModal").style.display="flex";
+}
+function closeHuellaModal(){document.getElementById("huellaModal").style.display="none";}
+async function ejecutarRegistroHuella(){
+  if(!currentUser)return;
+  document.getElementById("btnRegistrarHuella").disabled=true;
+  document.getElementById("huellaStatus").textContent="⏳";
+  document.getElementById("huellaMsg").textContent="Esperando tu huella...";
+  const u=TECNICOS[getUsuarios()[currentUser].idx];
+  const res=await window.registrarHuella(currentUser, u.name);
+  if(res.ok){
+    document.getElementById("huellaStatus").textContent="✅";
+    document.getElementById("huellaMsg").textContent="¡Huella registrada exitosamente! Ya podés iniciar sesión con ella.";
+    showToast("✅ Huella registrada correctamente","success");
+    actualizarHuellaHeader();
+    setTimeout(closeHuellaModal,2000);
+  } else {
+    document.getElementById("huellaStatus").textContent="❌";
+    document.getElementById("huellaMsg").textContent="Error: "+res.error;
+    document.getElementById("btnRegistrarHuella").disabled=false;
+    showToast("❌ No se pudo registrar la huella","error");
+  }
 }
 
 // ── CARD HTML ──
 function cardHTML(s,i,isMine){
   const done=!!s.marcado;
   let cls=done?(s.tardio?"card-late":"card-ok"):"card-pend";
-  if(s.supervisor) cls+=" card-supervisor";
-  if(isMine) cls+=" card-mine";
-
+  if(s.supervisor)cls+=" card-supervisor";
+  if(isMine)cls+=" card-mine";
   const badge=done
     ?(s.tardio?`<span class="badge badge-late"><span class="badge-dot"></span>TARDÍA</span>`
               :`<span class="badge badge-ok"><span class="badge-dot"></span>A TIEMPO</span>`)
     :(s.supervisor?`<span class="badge badge-sup"><span class="badge-dot" style="background:var(--gold)"></span>SUPERVISOR</span>`
                   :`<span class="badge badge-pend"><span class="badge-dot"></span>PENDIENTE</span>`);
-
   const timeMarked=done?`<div class="card-time-marked" style="color:${s.tardio?"var(--red)":"var(--green)"}">
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     Registrado a las ${s.marcado}${s.tardio?" — <strong>Tardía</strong>":""}
   </div>`:"";
-
-  // Justificación info
   let justifInfo="";
-  if(done && s.tardio){
+  if(done&&s.tardio){
     if(s.justificada){
-      const cls2=s.justificada==="Justificada"?"badge-just":"badge-injust";
-      justifInfo=`<div class="card-justif">
-        <span class="badge ${cls2}">${s.justificada==="Justificada"?"✅":"❌"} ${s.justificada}</span>
-        <span style="font-size:12px;color:var(--text-muted);">${s.descripcion}</span>
-      </div>`;
+      const c2=s.justificada==="Justificada"?"badge-just":"badge-injust";
+      justifInfo=`<div class="card-justif"><span class="badge ${c2}">${s.justificada==="Justificada"?"✅":"❌"} ${s.justificada}</span><span style="font-size:12px;color:var(--text-muted);">${s.descripcion}</span></div>`;
     } else {
       justifInfo=`<div class="card-justif"><span style="font-size:11px;color:var(--text-muted);font-style:italic;background:var(--gray-light);padding:2px 8px;border-radius:20px;">Sin clasificar</span></div>`;
     }
   }
-
   const winOpen=isWithinWindow();
   let action="";
   if(isMine&&!done){
-    action=`<button class="btn-marcar" onclick="marcar(${i})" ${!winOpen?"disabled":""}>
-      ${!winOpen?"Fuera de horario":"Marcar mi entrada"}
-    </button>`;
-  } else if(done){
-    // Only show warning icon if it's NOT a late that Sebastian can classify
-    if(!(s.tardio && puedeJustificar)){
-      action=`<div class="check-icon ${s.tardio?"check-late":"check-ok"}">${s.tardio?"⚠":"✓"}</div>`;
-    }
+    action=`<button class="btn-marcar" onclick="marcar(${i})" ${!winOpen?"disabled":""}>${!winOpen?"Fuera de horario":"Marcar mi entrada"}</button>`;
+  } else if(done&&!(s.tardio&&puedeJustificar)){
+    action=`<div class="check-icon ${s.tardio?"check-late":"check-ok"}">${s.tardio?"⚠":"✓"}</div>`;
   }
-
-  // Botón justificar solo para Sebastián en tardías — va dentro del card-info
   let justifBtn="";
-  if(puedeJustificar && done && s.tardio){
-    justifBtn=`<div style="margin-top:8px;">
-      <button class="btn-justif" onclick="openJustifModal(${i})">${s.justificada?"✏️ Editar clasificación":"📝 Clasificar tardía"}</button>
-    </div>`;
+  if(puedeJustificar&&done&&s.tardio){
+    justifBtn=`<div style="margin-top:8px;"><button class="btn-justif" onclick="openJustifModal(${i})">${s.justificada?"✏️ Editar":"📝 Clasificar tardía"}</button></div>`;
   }
-
   const supTag=s.supervisor?` <span style="font-size:10px;font-weight:600;color:var(--gold);background:var(--gold-light);padding:1px 7px;border-radius:20px;margin-left:4px;">SUP</span>`:"";
   const meTag=isMine?` <span style="font-size:11px;color:var(--blue);"> (yo)</span>`:"";
-
   return `<div class="tecnico-card ${cls}" style="animation-delay:${i*0.05}s">
     <div class="avatar" style="background:${s.bg};color:${s.color};border:1.5px solid ${s.border};">${s.initials}</div>
     <div class="card-info">
@@ -812,16 +933,14 @@ function cardHTML(s,i,isMine){
       </div>
       ${timeMarked}${justifInfo}${justifBtn}
     </div>
-    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-      ${badge}${action}
-    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">${badge}${action}</div>
   </div>`;
 }
 
 function render(){
-  const myIdx=currentUser?USUARIOS[currentUser].idx:-1;
+  const myIdx=currentUser?getUsuarios()[currentUser].idx:-1;
   let ok=0,late=0,pend=0;
-  state.forEach(s=>{ s.marcado&&s.tardio?late++:s.marcado&&!s.tardio?ok++:pend++; });
+  state.forEach(s=>{s.marcado&&s.tardio?late++:s.marcado&&!s.tardio?ok++:pend++;});
   document.getElementById("cnt-ok").textContent=ok;
   document.getElementById("cnt-late").textContent=late;
   document.getElementById("cnt-pend").textContent=pend;
@@ -830,168 +949,84 @@ function render(){
   else{wb.textContent="⛔ Fuera de ventana";wb.className="window-badge closed";}
   if(myIdx>=0){document.getElementById("myCardWrap").style.display="block";document.getElementById("myCard").innerHTML=cardHTML(state[myIdx],myIdx,true);}
   const c=document.getElementById("cards");c.innerHTML="";
-  state.forEach((s,i)=>{ if(i===myIdx) return; c.innerHTML+=cardHTML(s,i,false); });
+  state.forEach((s,i)=>{if(i===myIdx)return;c.innerHTML+=cardHTML(s,i,false);});
 }
 
 // ── REPORTE ──
 function toggleReporte(){
-  const panel=document.getElementById("reportPanel");
-  if(panel.style.display==="none"||panel.style.display===""){
-    panel.style.display="block";
-    cargarReporte();
-  } else {
-    panel.style.display="none";
-  }
+  const p=document.getElementById("reportPanel");
+  if(p.style.display==="none"||!p.style.display){p.style.display="block";cargarReporte();}
+  else p.style.display="none";
 }
-
 async function cargarReporte(){
-  const content=document.getElementById("reportContent");
-  content.innerHTML=`<div class="report-loading">⏳ Cargando datos desde Google Sheets...</div>`;
+  document.getElementById("reportContent").innerHTML=`<div class="report-loading">⏳ Cargando desde Google Sheets...</div>`;
   try{
     const res=await fetch(SHEETS_URL);
     const json=await res.json();
-    if(!json.data){ content.innerHTML=`<div class="report-loading" style="color:var(--red);">❌ Error al cargar datos.</div>`; return; }
-    const d=new Date();
-    const mes=d.getMonth(), anio=d.getFullYear();
+    if(!json.data){document.getElementById("reportContent").innerHTML=`<div class="report-loading" style="color:var(--red);">❌ Error al cargar.</div>`;return;}
+    const d=new Date(),mes=d.getMonth(),anio=d.getFullYear();
     const rows=json.data.filter(r=>{
-      if(!r["Fecha"]) return false;
-      const rawFecha = r["Fecha"];
-      let rowMes = -1, rowAnio = -1;
-
-      // Formato dd/mm/yyyy
-      if(typeof rawFecha === "string" && rawFecha.includes("/")){
-        // Remove leading apostrophe if present
-        const clean = rawFecha.replace(/^'/,"");
-        const parts = clean.split("/");
-        if(parts.length >= 3){
-          rowMes  = parseInt(parts[1]) - 1;
-          rowAnio = parseInt(parts[2]);
-        }
-      }
-      // Formato yyyy-mm-dd o Date string de Sheets
-      else if(typeof rawFecha === "string" && rawFecha.includes("-")){
-        const parts = rawFecha.split("-");
-        rowAnio = parseInt(parts[0]);
-        rowMes  = parseInt(parts[1]) - 1;
-      }
-      // Sheets a veces devuelve un número serial de fecha
-      else if(typeof rawFecha === "number"){
-        // Excel serial date: días desde 30-dic-1899
-        const d = new Date(Math.round((rawFecha - 25569) * 86400 * 1000));
-        rowMes  = d.getMonth();
-        rowAnio = d.getFullYear();
-      }
-      // Si es objeto Date serializado como string tipo "Mon Apr 01 2026..."
-      else if(typeof rawFecha === "string"){
-        const d = new Date(rawFecha);
-        if(!isNaN(d)){
-          rowMes  = d.getMonth();
-          rowAnio = d.getFullYear();
-        }
-      }
-
-      return rowMes === mes && rowAnio === anio;
+      if(!r["Fecha"])return false;
+      const raw=String(r["Fecha"]).replace(/^'/,"");
+      if(raw.includes("/")){const p=raw.split("/");return parseInt(p[1])-1===mes&&parseInt(p[2])===anio;}
+      if(raw.includes("-")){const p=raw.split("-");return parseInt(p[1])-1===mes&&parseInt(p[0])===anio;}
+      return false;
     });
     document.getElementById("reportTitle").textContent=`Reporte — ${MESES[mes]} ${anio}`;
     document.getElementById("reportSub").textContent=`${rows.length} registro${rows.length!==1?"s":""} encontrados`;
-    renderReporte(rows, mes, anio);
+    renderReporte(rows,mes,anio);
   }catch(e){
-    content.innerHTML=`<div class="report-loading" style="color:var(--red);">❌ Sin conexión a Google Sheets.<br><small>${e.message}</small></div>`;
+    document.getElementById("reportContent").innerHTML=`<div class="report-loading" style="color:var(--red);">❌ Sin conexión a Sheets.</div>`;
   }
 }
-
-function renderReporte(rows, mes, anio){
-  const total=rows.length;
+function renderReporte(rows,mes,anio){
   const tardias=rows.filter(r=>r["Estado"]==="TARDÍA");
   const aTiempo=rows.filter(r=>r["Estado"]==="A TIEMPO");
-  const justif=tardias.filter(r=>r["Justificada"]==="Justificada");
   const injust=tardias.filter(r=>r["Justificada"]==="Injustificada");
-
-  // Stats por persona para gráfico
   const personas={};
-  TECNICOS.forEach(t=>{ personas[t.name]={ok:0,tarde:0}; });
-  rows.forEach(r=>{
-    const n=r["Nombre"];
-    if(!personas[n]) personas[n]={ok:0,tarde:0};
-    r["Estado"]==="TARDÍA"?personas[n].tarde++:personas[n].ok++;
-  });
-
+  TECNICOS.forEach(t=>{personas[t.name]={ok:0,tarde:0};});
+  rows.forEach(r=>{const n=r["Nombre"];if(!personas[n])personas[n]={ok:0,tarde:0};r["Estado"]==="TARDÍA"?personas[n].tarde++:personas[n].ok++;});
   const isDark=document.body.classList.contains("dark");
   const textColor=isDark?"#e8e6e0":"#1a1a18";
   const gridColor=isDark?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)";
-
   const nombres=Object.keys(personas);
-  const tardesData=nombres.map(n=>personas[n].tarde);
-  const okData=nombres.map(n=>personas[n].ok);
-
-  // Render
   document.getElementById("reportContent").innerHTML=`
     <div class="report-grid">
-      <div class="report-stat">
-        <div class="report-stat-num" style="color:var(--blue)">${total}</div>
-        <div class="report-stat-lbl">Total registros</div>
-      </div>
-      <div class="report-stat">
-        <div class="report-stat-num" style="color:var(--green)">${aTiempo.length}</div>
-        <div class="report-stat-lbl">A tiempo</div>
-      </div>
-      <div class="report-stat">
-        <div class="report-stat-num" style="color:var(--red)">${tardias.length}</div>
-        <div class="report-stat-lbl">Tardías</div>
-      </div>
-      <div class="report-stat">
-        <div class="report-stat-num" style="color:var(--orange)">${injust.length}</div>
-        <div class="report-stat-lbl">Injustificadas</div>
-      </div>
+      <div class="report-stat"><div class="report-stat-num" style="color:var(--blue)">${rows.length}</div><div class="report-stat-lbl">Total</div></div>
+      <div class="report-stat"><div class="report-stat-num" style="color:var(--green)">${aTiempo.length}</div><div class="report-stat-lbl">A tiempo</div></div>
+      <div class="report-stat"><div class="report-stat-num" style="color:var(--red)">${tardias.length}</div><div class="report-stat-lbl">Tardías</div></div>
+      <div class="report-stat"><div class="report-stat-num" style="color:var(--orange)">${injust.length}</div><div class="report-stat-lbl">Injustificadas</div></div>
     </div>
-
     <div class="chart-wrap">
       <div class="chart-title">Tardías por técnico — ${MESES[mes]} ${anio}</div>
       <canvas id="tardiaChart" height="120"></canvas>
     </div>
-
     <div style="overflow-x:auto;">
       <table class="report-table">
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Nombre</th>
-            <th>Entrada</th>
-            <th>Marcó</th>
-            <th>Estado</th>
-            <th>Clasificación</th>
-            <th>Descripción</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.length===0?`<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">Sin registros este mes</td></tr>`
+        <thead><tr><th>Fecha</th><th>Nombre</th><th>Entrada</th><th>Marcó</th><th>Estado</th><th>Clasificación</th><th>Descripción</th></tr></thead>
+        <tbody>${rows.length===0?`<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">Sin registros</td></tr>`
           :rows.map(r=>{
-            const esT=r["Estado"]==="TARDÍA";
-            const jus=r["Justificada"];
-            let jusTag="<span class='tag tag-sin'>—</span>";
-            if(jus==="Justificada") jusTag="<span class='tag tag-just'>✅ Justificada</span>";
-            if(jus==="Injustificada") jusTag="<span class='tag tag-injust'>❌ Injustificada</span>";
-            // Clean display values - remove leading apostrophe Sheets stores
-            const cleanFecha  = String(r["Fecha"]||"").replace(/^'/,"");
-            const cleanEntrada= String(r["Horario Entrada"]||"").replace(/^'/,"");
-            const cleanMarcado= String(r["Hora Marcado"]||"").replace(/^'/,"");
+            const esT=r["Estado"]==="TARDÍA",jus=r["Justificada"];
+            let jusTag=`<span class='tag tag-sin'>—</span>`;
+            if(jus==="Justificada")jusTag=`<span class='tag tag-just'>✅ Justificada</span>`;
+            if(jus==="Injustificada")jusTag=`<span class='tag tag-injust'>❌ Injustificada</span>`;
+            const cleanF=String(r["Fecha"]||"").replace(/^'/,"");
+            const cleanE=String(r["Horario Entrada"]||"").replace(/^'/,"");
+            const cleanM=String(r["Hora Marcado"]||"").replace(/^'/,"");
             return `<tr>
-              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;">${cleanFecha}</td>
+              <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;">${cleanF}</td>
               <td style="font-weight:600;">${r["Nombre"]||""}</td>
-              <td style="font-family:'IBM Plex Mono',monospace;">${cleanEntrada}</td>
-              <td style="font-family:'IBM Plex Mono',monospace;">${cleanMarcado}</td>
+              <td style="font-family:'IBM Plex Mono',monospace;">${cleanE}</td>
+              <td style="font-family:'IBM Plex Mono',monospace;">${cleanM}</td>
               <td><span class="tag ${esT?"tag-late":"tag-ok"}">${r["Estado"]||""}</span></td>
               <td>${esT?jusTag:"—"}</td>
-              <td style="font-size:12px;color:var(--text-muted);max-width:200px;">${r["Descripción"]||""}</td>
+              <td style="font-size:12px;color:var(--text-muted);max-width:180px;">${r["Descripción"]||""}</td>
             </tr>`;
           }).join("")}
         </tbody>
       </table>
-    </div>
-  `;
-
-  // Gráfico
-  if(reportChart){ reportChart.destroy(); reportChart=null; }
+    </div>`;
+  if(reportChart){reportChart.destroy();reportChart=null;}
   const ctx=document.getElementById("tardiaChart");
   if(ctx){
     reportChart=new Chart(ctx,{
@@ -999,33 +1034,27 @@ function renderReporte(rows, mes, anio){
       data:{
         labels:nombres.map(n=>n.split(" ")[0]),
         datasets:[
-          {label:"Tardías",data:tardesData,backgroundColor:"rgba(162,45,45,0.75)",borderColor:"#A32D2D",borderWidth:1.5,borderRadius:6},
-          {label:"A tiempo",data:okData,backgroundColor:"rgba(59,109,17,0.65)",borderColor:"#3B6D11",borderWidth:1.5,borderRadius:6}
+          {label:"Tardías",data:nombres.map(n=>personas[n].tarde),backgroundColor:"rgba(162,45,45,0.75)",borderColor:"#A32D2D",borderWidth:1.5,borderRadius:6},
+          {label:"A tiempo",data:nombres.map(n=>personas[n].ok),backgroundColor:"rgba(59,109,17,0.65)",borderColor:"#3B6D11",borderWidth:1.5,borderRadius:6}
         ]
       },
-      options:{
-        responsive:true,
-        plugins:{legend:{labels:{color:textColor,font:{family:"Plus Jakarta Sans",size:12}}}},
-        scales:{
-          x:{ticks:{color:textColor,font:{size:12}},grid:{color:gridColor}},
-          y:{ticks:{color:textColor,stepSize:1},grid:{color:gridColor},beginAtZero:true}
-        }
-      }
+      options:{responsive:true,plugins:{legend:{labels:{color:textColor,font:{family:"Plus Jakarta Sans",size:12}}}},
+        scales:{x:{ticks:{color:textColor},grid:{color:gridColor}},y:{ticks:{color:textColor,stepSize:1},grid:{color:gridColor},beginAtZero:true}}}
     });
   }
 }
 
 // ── EXPORT CSV ──
 function exportCSV(){
-  const mes=new Date().getMonth(), anio=new Date().getFullYear();
+  const mes=new Date().getMonth(),anio=new Date().getFullYear();
   const regs=JSON.parse(localStorage.getItem("aya_registros")||"[]");
-  const fil=regs.filter(r=>{ if(!r.fecha) return false; const[d,m,y]=r.fecha.split("/").map(Number); return m-1===mes&&y===anio; });
-  if(fil.length===0){alert("No hay registros del mes actual.");return;}
+  const fil=regs.filter(r=>{if(!r.fecha)return false;const[d,m,y]=r.fecha.split("/").map(Number);return m-1===mes&&y===anio;});
+  if(!fil.length){alert("No hay registros del mes actual.");return;}
   let csv="\uFEFFecha,Nombre,Horario Entrada,Hora Marcado,Estado,Tardía,Clasificación,Descripción\n";
-  fil.forEach(r=>{ csv+=`${r.fecha},${r.nombre},${r.entrada},${r.marcado},${r.estado},${r.tardio},${r.justificada||""},${r.descripcion||""}\n`; });
+  fil.forEach(r=>{csv+=`${r.fecha},${r.nombre},${r.entrada},${r.marcado},${r.estado},${r.tardio},${r.justificada||""},${r.descripcion||""}\n`;});
   const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url; a.download=`Reporte_AyA_Orbe_${MESES[mes]}_${anio}.csv`; a.click();
+  const a=document.createElement("a");a.href=url;a.download=`Reporte_AyA_Orbe_${MESES[new Date().getMonth()]}_${new Date().getFullYear()}.csv`;a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -1033,14 +1062,17 @@ function exportCSV(){
 function tick(){
   const d=new Date();
   document.getElementById("clock").textContent=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  if(d.getSeconds()===0) render();
+  if(d.getSeconds()===0)render();
 }
-tick(); setInterval(tick,1000);
+tick();setInterval(tick,1000);
 
 window.addEventListener("load",()=>{
   checkBlockers();
   const dark=localStorage.getItem("aya_dark")==="1";
-  if(dark){ document.body.classList.add("dark"); updateDarkIcons(true); }
+  if(dark){document.body.classList.add("dark");updateDarkIcons(true);}
+});
+window.addEventListener("firebaseReady",()=>{
+  console.log("Firebase + WebAuthn listo");
 });
 </script>
 </body>
